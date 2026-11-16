@@ -327,6 +327,45 @@ def show_leaderboard(records):
     plt.show()
 
 
+def draw_game_over(screen, title_font, font, score):
+    """Draw the game-over message and restart/quit instructions."""
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 190))
+    screen.blit(overlay, (0, 0))
+
+    title = title_font.render("GAME OVER", True, RED)
+    title_rect = title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 75))
+    screen.blit(title, title_rect)
+
+    score_text = font.render(f"Final Score: {score}", True, WHITE)
+    score_rect = score_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 25))
+    screen.blit(score_text, score_rect)
+
+    restart_text = font.render("Press R to Restart", True, GREEN)
+    restart_rect = restart_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 25))
+    screen.blit(restart_text, restart_rect)
+
+    quit_text = font.render("Press Q to Quit", True, WHITE)
+    quit_rect = quit_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 65))
+    screen.blit(quit_text, quit_rect)
+
+
+def save_player_score(player_name, score):
+    """Save one completed game's score to the leaderboard."""
+    records = load_records()
+    timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+
+    # Avoid overwriting an entry if two games finish within the same second.
+    while timestamp in records:
+        timestamp = (
+            datetime.datetime.now().isoformat(timespec="seconds")
+            + f"-{datetime.datetime.now().microsecond}"
+        )
+
+    records[timestamp] = {player_name: score}
+    save_records(records)
+
+
 def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Tetris")
@@ -339,79 +378,133 @@ def main():
         pygame.quit()
         return
 
-    locked_positions = {}
-    current_piece = Tetromino(random.choice(list(SHAPES.keys())))
-    fall_time = 0
-    fall_speed = 0.5
-    score = 0
-    paused = False
+    def reset_game():
+        """Reset all state that belongs to a single game."""
+        return {
+            "locked_positions": {},
+            "current_piece": Tetromino(random.choice(list(SHAPES.keys()))),
+            "fall_time": 0,
+            "fall_speed": 0.5,
+            "score": 0,
+            "paused": False,
+            "game_over": False,
+            "score_saved": False,
+        }
 
+    game = reset_game()
     running = True
+
+    def lock_current_piece():
+        """Lock the current piece, update the score, and spawn the next piece."""
+        grid = create_grid(game["locked_positions"])
+
+        for x, y in game["current_piece"].get_cells():
+            game["locked_positions"][(x, y)] = game["current_piece"].color
+
+        grid = create_grid(game["locked_positions"])
+        lines_cleared = clear_rows(grid, game["locked_positions"])
+        game["score"] += calculate_score(lines_cleared)
+        game["fall_speed"] = max(
+            0.08, 0.5 - (game["score"] // 500) * 0.03
+        )
+
+        game["current_piece"] = Tetromino(
+            random.choice(list(SHAPES.keys()))
+        )
+        game["fall_time"] = 0
+
+        grid = create_grid(game["locked_positions"])
+        if not game["current_piece"].valid_position(grid):
+            game["game_over"] = True
+
+            # Save this game's score once, not every frame.
+            if not game["score_saved"]:
+                save_player_score(player_name, game["score"])
+                game["score_saved"] = True
+
     while running:
-        clock.tick()
-        grid = create_grid(locked_positions)
+        clock.tick(60)
+        grid = create_grid(game["locked_positions"])
 
-        if not paused:
-            fall_time += clock.get_rawtime()
+        # Update falling pieces only while the game is active and unpaused.
+        if not game["paused"] and not game["game_over"]:
+            game["fall_time"] += clock.get_time()
 
-            if fall_time / 1000 >= fall_speed:
-                fall_time = 0
-                if not current_piece.move(0, 1, grid):
-                    for x, y in current_piece.get_cells():
-                        locked_positions[(x, y)] = current_piece.color
-                    grid = create_grid(locked_positions)
-                    lines_cleared = clear_rows(grid, locked_positions)
-                    score += calculate_score(lines_cleared)
-                    fall_speed = max(0.08, 0.5 - (score // 500) * 0.03)
-                    grid = create_grid(locked_positions)
-                    current_piece = Tetromino(random.choice(list(SHAPES.keys())))
-                    if not current_piece.valid_position(grid):
-                        running = False
-        else:
-            fall_time = 0
+            if game["fall_time"] / 1000 >= game["fall_speed"]:
+                game["fall_time"] = 0
 
+                # If the piece cannot move down, lock it immediately.
+                if not game["current_piece"].move(0, 1, grid):
+                    lock_current_piece()
+        elif game["paused"]:
+            game["fall_time"] = 0
+
+        # Handle input.
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_p:
-                    paused = not paused
-                elif not paused:
-                    if event.key == pygame.K_LEFT:
-                        current_piece.move(-1, 0, grid)
-                    elif event.key == pygame.K_RIGHT:
-                        current_piece.move(1, 0, grid)
-                    elif event.key == pygame.K_DOWN:
-                        current_piece.move(0, 1, grid)
-                    elif event.key == pygame.K_UP:
-                        current_piece.rotation += 1
-                        if not current_piece.valid_position(grid):
-                            current_piece.rotation -= 1
-                    elif event.key == pygame.K_SPACE:
-                        while current_piece.move(0, 1, grid):
-                            pass
+                continue
 
+            if event.type != pygame.KEYDOWN:
+                continue
+
+            if game["game_over"]:
+                if event.key == pygame.K_r:
+                    game = reset_game()
+                elif event.key in (pygame.K_q, pygame.K_ESCAPE):
+                    running = False
+                continue
+
+            if event.key == pygame.K_p:
+                game["paused"] = not game["paused"]
+            elif not game["paused"]:
+                if event.key == pygame.K_LEFT:
+                    game["current_piece"].move(-1, 0, grid)
+                elif event.key == pygame.K_RIGHT:
+                    game["current_piece"].move(1, 0, grid)
+                elif event.key == pygame.K_DOWN:
+                    # Soft drop: move down one cell; normal gravity continues.
+                    if not game["current_piece"].move(0, 1, grid):
+                        lock_current_piece()
+                elif event.key == pygame.K_UP:
+                    game["current_piece"].rotation += 1
+                    if not game["current_piece"].valid_position(grid):
+                        game["current_piece"].rotation -= 1
+                elif event.key == pygame.K_SPACE:
+                    # Hard drop: move to the lowest valid position, then lock
+                    # immediately so the player cannot move the landed piece.
+                    while game["current_piece"].move(0, 1, grid):
+                        pass
+                    lock_current_piece()
+                    # Do not let remaining key events affect the newly spawned piece.
+                    break
+
+        # Draw the game.
         screen.fill(BLACK)
+        grid = create_grid(game["locked_positions"])
         draw_grid(screen, grid)
 
-        for x, y in current_piece.get_cells():
-            pygame.draw.rect(
-                screen,
-                current_piece.color,
-                (x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE),
-            )
+        if not game["game_over"]:
+            for x, y in game["current_piece"].get_cells():
+                pygame.draw.rect(
+                    screen,
+                    game["current_piece"].color,
+                    (x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE),
+                )
 
-        draw_score(screen, score, player_name, font)
-        if paused:
+        draw_score(screen, game["score"], player_name, font)
+
+        if game["paused"] and not game["game_over"]:
             draw_pause(screen, font)
+
+        if game["game_over"]:
+            draw_game_over(screen, title_font, font, game["score"])
 
         pygame.display.update()
 
-    # Save the final score while preserving all valid previous records.
-    records = load_records()
-    timestamp = datetime.datetime.now().isoformat(timespec="seconds")
-    records[timestamp] = {player_name: score}
-    save_records(records)
+    # If the window is closed before game over, still save the current score.
+    if not game["score_saved"]:
+        save_player_score(player_name, game["score"])
 
     pygame.quit()
     show_leaderboard(load_records())
