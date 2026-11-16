@@ -16,6 +16,7 @@ BLOCK_SIZE = WIDTH // COLS
 
 # Leaderboard file
 RECORDS_FILE = "tetris-records.json"
+MAX_PLAYER_NAME_LENGTH = 12
 
 # Colors
 BLACK = (0, 0, 0)
@@ -267,7 +268,12 @@ def get_player_name(screen, title_font, input_font):
                         input_active = False
                 elif event.key == pygame.K_BACKSPACE:
                     player_name = player_name[:-1]
-                elif len(player_name) < 12 and event.unicode.isprintable():
+                elif (
+                    event.unicode.isprintable()
+                    and len(player_name) < MAX_PLAYER_NAME_LENGTH
+                    and input_font.size(player_name + event.unicode)[0]
+                    <= WIDTH - 100
+                ):
                     player_name += event.unicode
 
         screen.fill(BLACK)
@@ -281,8 +287,18 @@ def get_player_name(screen, title_font, input_font):
         name_surface = input_font.render(player_name, True, WHITE)
         screen.blit(name_surface, (input_box.x + 10, input_box.y + 8))
 
+        counter_text = input_font.render(
+            f"{len(player_name)}/{MAX_PLAYER_NAME_LENGTH} characters",
+            True,
+            GRAY,
+        )
+        counter_rect = counter_text.get_rect(
+            center=(WIDTH // 2, HEIGHT // 2 + 45)
+        )
+        screen.blit(counter_text, counter_rect)
+
         hint_text = input_font.render("Press Enter to start", True, GRAY)
-        hint_rect = hint_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 60))
+        hint_rect = hint_text.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 65))
         screen.blit(hint_text, hint_rect)
         pygame.display.update()
 
