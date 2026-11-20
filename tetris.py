@@ -53,16 +53,7 @@ SHAPE_COLORS = {
 
 
 def load_records(filename=RECORDS_FILE):
-    """Load leaderboard records without crashing on missing or invalid files.
-
-    Expected format:
-    {
-        "timestamp": {"player_name": score}
-    }
-
-    Invalid individual entries are ignored. If the whole JSON file is
-    malformed, it is preserved under a .corrupt timestamped filename.
-    """
+    """Load records, normalize names, and retain each player's best score."""
     if not os.path.exists(filename):
         return {}
 
@@ -96,12 +87,11 @@ def load_records(filename=RECORDS_FILE):
         print("Warning: leaderboard root must be a JSON object. Ignoring its contents.")
         return {}
 
-    valid_records = {}
-    for timestamp, player_data in data.items():
-        if not isinstance(timestamp, str) or not isinstance(player_data, dict):
+    best_scores = {}
+    # Read both the original timestamp-based format and the cleaned format.
+    for player_data in data.values():
+        if not isinstance(player_data, dict):
             continue
-
-        valid_player_data = {}
         for player_name, score in player_data.items():
             if (
                 isinstance(player_name, str)
@@ -110,12 +100,13 @@ def load_records(filename=RECORDS_FILE):
                 and not isinstance(score, bool)
                 and score >= 0
             ):
-                valid_player_data[player_name] = score
+                name = player_name.strip().lower()
+                best_scores[name] = max(score, best_scores.get(name, 0))
 
-        if valid_player_data:
-            valid_records[timestamp] = valid_player_data
-
-    return valid_records
+    cleaned_records = {"best_scores": best_scores} if best_scores else {}
+    if cleaned_records != data:
+        save_records(cleaned_records, filename)
+    return cleaned_records
 
 
 def save_records(data, filename=RECORDS_FILE):
@@ -302,23 +293,13 @@ def get_player_name(screen, title_font, input_font):
         screen.blit(hint_text, hint_rect)
         pygame.display.update()
 
-    return player_name.strip()
+    return player_name.strip().lower()
 
 
 def build_leaderboard(records):
-    """Return each player's best score, sorted from highest to lowest."""
-    best_scores = {}
-
-    for player_data in records.values():
-        for player_name, score in player_data.items():
-            normalized_name = player_name.strip().lower()
-            if not normalized_name:
-                continue
-            best_scores[normalized_name] = max(
-                score, best_scores.get(normalized_name, 0)
-            )
-
-    return sorted(best_scores.items(), key=lambda item: item[1], reverse=True)
+    """Return each lowercase player name once, sorted by best score."""
+    best_scores = records.get("best_scores", {})
+    return sorted(best_scores.items(), key=lambda item: (-item[1], item[0]))
 
 
 def show_leaderboard(records):
@@ -367,19 +348,15 @@ def draw_game_over(screen, title_font, font, score):
 
 
 def save_player_score(player_name, score):
-    """Save one completed game's score to the leaderboard."""
+    """Save a player's score while preserving their all-time best score."""
     records = load_records()
-    timestamp = datetime.datetime.now().isoformat(timespec="seconds")
+    normalized_name = player_name.strip().lower()
+    if not normalized_name:
+        return False
 
-    # Avoid overwriting an entry if two games finish within the same second.
-    while timestamp in records:
-        timestamp = (
-            datetime.datetime.now().isoformat(timespec="seconds")
-            + f"-{datetime.datetime.now().microsecond}"
-        )
-
-    records[timestamp] = {player_name: score}
-    save_records(records)
+    best_scores = records.get("best_scores", {}).copy()
+    best_scores[normalized_name] = max(score, best_scores.get(normalized_name, 0))
+    return save_records({"best_scores": best_scores})
 
 
 def main():
