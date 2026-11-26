@@ -34,3 +34,5 @@ src/staticfiles/
 .vscode/
 .DS_Store
 Thumbs.db
+
+.tetris-records.json
